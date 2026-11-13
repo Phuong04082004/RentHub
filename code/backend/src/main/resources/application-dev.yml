@@ -41,5 +41,5 @@ app:
     enabled: true
     gemini:
       api-key: ${GEMINI_API_KEY}
-      model: ${GEMINI_MODEL:gemini-flash-latest}
-      timeout-ms: 15000
+      model: ${GEMINI_MODEL:gemini-2.5-flash}
+      timeout-ms: 30000

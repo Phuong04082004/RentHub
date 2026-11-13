@@ -15,7 +15,7 @@ interface ChatContextType {
   messages: MessageResponse[];
   loadingMessages: boolean;
   unreadTotal: number;
-  refreshConversations: () => Promise<void>;
+  refreshConversations: () => Promise<ConversationSummaryResponse[]>;
   loadMoreMessages: () => Promise<void>;
   activeReferencedProduct: any | null;
   setActiveReferencedProduct: (product: any | null) => void;
@@ -35,18 +35,32 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
   const [hasMore, setHasMore] = useState(true);
   const [activeReferencedProduct, setActiveReferencedProduct] = useState<any | null>(null);
 
-  const refreshConversations = async () => {
-    if (isLoading || !isAuthenticated || !user) return;
+  // Clear state when user logs out
+  useEffect(() => {
+    if (!isAuthenticated || !user) {
+      setConversations([]);
+      setMessages([]);
+      setActiveConversationId(null);
+      setIsOpen(false);
+      setActiveReferencedProduct(null);
+    }
+  }, [isAuthenticated, user]);
+
+  const refreshConversations = async (): Promise<ConversationSummaryResponse[]> => {
+    if (isLoading || !isAuthenticated || !user) return [];
     try {
       const data = await chatService.getMyConversations();
       if (data) {
         const uniqueData = Array.from(new Map(data.map(c => [c.conversationId, c])).values());
         setConversations(uniqueData);
+        return uniqueData;
       } else {
         setConversations([]);
+        return [];
       }
     } catch (err) {
       console.error("Lỗi lấy hộp thoại chat:", err);
+      return [];
     }
   };
 
@@ -63,7 +77,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       
       const token = localStorage.getItem("accessToken") || localStorage.getItem("token");
       
-      const wsUrl = "http://localhost:8080/ws";
+      const wsUrl = process.env.NEXT_PUBLIC_WS_URL || (process.env.NEXT_PUBLIC_API_URL ? process.env.NEXT_PUBLIC_API_URL.replace(/\/api\/?$/, "/ws") : "http://localhost:8080/ws");
       
       const client = new Client({
         webSocketFactory: () => new SockJS(wsUrl),
@@ -161,8 +175,12 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       setConversations(prev =>
         prev.map(c => (c.conversationId === id ? { ...c, unreadCount: 0 } : c))
       );
-    } catch (err) {
+    } catch (err: any) {
       console.error("Lỗi tải tin nhắn:", err);
+      if (err.response?.status === 403) {
+        setActiveConversationId(null);
+        setMessages([]);
+      }
     } finally {
       setLoadingMessages(false);
     }
@@ -189,7 +207,8 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     setIsOpen(true);
     if (!user) return;
 
-    await refreshConversations();
+    const freshList = await refreshConversations();
+    const currentList = freshList.length > 0 ? freshList : conversations;
 
     if (recipientId) {
       try {
@@ -203,9 +222,9 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       } catch (err) {
         console.error("Lỗi tạo/lấy hội thoại:", err);
       }
-    } else if (conversations.length > 0 && !activeConversationId) {
+    } else if (currentList.length > 0 && !activeConversationId) {
       // Open the first conversation in the list by default
-      await selectConversation(conversations[0].conversationId);
+      await selectConversation(currentList[0].conversationId);
     }
   };
 

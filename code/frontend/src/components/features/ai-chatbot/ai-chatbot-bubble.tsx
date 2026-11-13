@@ -386,7 +386,7 @@ export function AiChatbotBubble() {
         conversationId: conversationId
       });
       
-      setConversationId(response.conversationId);
+      setConversationId(response.conversationId ?? undefined);
       
       setMessages((prev) => [
         ...prev,

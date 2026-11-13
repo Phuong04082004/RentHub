@@ -1,8 +1,16 @@
+# Environment files
 .env
+.env*
+.env.*
 *.env
+*.env.local
+
+# IDE & Editors
 .idea/
 *.iws
 *.iml
+
+# Build & dependencies
 target/
 node_modules/
 jdk21/

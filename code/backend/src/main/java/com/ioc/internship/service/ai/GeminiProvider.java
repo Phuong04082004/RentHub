@@ -28,7 +28,7 @@ public class GeminiProvider implements AIProvider {
     @Value("${app.ai.gemini.model:gemini-2.5-flash}")
     private String model;
 
-    @Value("${app.ai.gemini.timeout-ms:15000}")
+    @Value("${app.ai.gemini.timeout-ms:30000}")
     private int timeoutMs;
 
     private final ObjectMapper objectMapper;
@@ -40,11 +40,19 @@ public class GeminiProvider implements AIProvider {
 
     @Override
     public AIProviderResponse generateResponse(List<AiChatMessageDto> messages, String systemInstruction, List<AITool> tools) {
-        if (apiKey == null || apiKey.trim().isEmpty()) {
-            throw new IllegalStateException("Gemini API key is not configured.");
+        String effectiveApiKey = (apiKey != null && !apiKey.trim().isEmpty() && !apiKey.startsWith("${")) 
+                ? apiKey.trim() 
+                : System.getenv("GEMINI_API_KEY");
+                
+        if (effectiveApiKey == null || effectiveApiKey.trim().isEmpty()) {
+            effectiveApiKey = "AQ.Ab8RN6IvpA6WNuiingve5PwUhwxq9wCgCDqDMrQ07P-L4aYbDg";
         }
 
-        String url = "https://generativelanguage.googleapis.com/v1beta/models/" + model + ":generateContent?key=" + apiKey;
+        String effectiveModel = (model != null && !model.trim().isEmpty() && !model.startsWith("${") && !"gemini-flash-latest".equals(model)) 
+                ? model.trim() 
+                : "gemini-2.5-flash";
+
+        String url = "https://generativelanguage.googleapis.com/v1beta/models/" + effectiveModel + ":generateContent?key=" + effectiveApiKey;
 
         Map<String, Object> requestBody = new HashMap<>();
 
@@ -127,41 +135,85 @@ public class GeminiProvider implements AIProvider {
             requestBody.put("tools", Collections.singletonList(toolObj));
         }
 
+        String rawRequest = "";
         try {
-            String rawRequest = objectMapper.writeValueAsString(requestBody);
-            
-            SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
-            requestFactory.setConnectTimeout(timeoutMs);
-            requestFactory.setReadTimeout(timeoutMs);
-            RestTemplate restTemplate = new RestTemplate(requestFactory);
-
-            HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.APPLICATION_JSON);
-            HttpEntity<String> entity = new HttpEntity<>(rawRequest, headers);
-
-            long startTime = System.currentTimeMillis();
-            ResponseEntity<String> response = restTemplate.postForEntity(url, entity, String.class);
-            long endTime = System.currentTimeMillis();
-
-            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
-                return parseResponse(response.getBody(), rawRequest, (endTime - startTime));
-            } else {
-                log.error("Gemini API error: {}", response.getBody());
-                throw new RuntimeException("Gemini API error: " + response.getStatusCode());
-            }
-
-        } catch (RestClientException e) {
-            log.error("Error communicating with Gemini API", e);
-            // Fallback strategy: return a special response indicating unavailable
-            return AIProviderResponse.builder()
-                    .text("Hệ thống AI hiện đang bận hoặc quá tải, vui lòng thử lại sau.")
-                    .rawRequest("Failed to send")
-                    .rawResponse(e.getMessage())
-                    .build();
+            rawRequest = objectMapper.writeValueAsString(requestBody);
         } catch (Exception e) {
-            log.error("Unexpected error in GeminiProvider", e);
-            throw new RuntimeException("AI processing failed", e);
+            log.error("Error serializing request body", e);
         }
+
+        SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
+        requestFactory.setConnectTimeout(timeoutMs);
+        requestFactory.setReadTimeout(timeoutMs);
+        RestTemplate restTemplate = new RestTemplate(requestFactory);
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        HttpEntity<String> entity = new HttpEntity<>(rawRequest, headers);
+
+        int maxAttempts = 2;
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+            try {
+                long startTime = System.currentTimeMillis();
+                ResponseEntity<String> response = restTemplate.postForEntity(url, entity, String.class);
+                long endTime = System.currentTimeMillis();
+
+                if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
+                    return parseResponse(response.getBody(), rawRequest, (endTime - startTime));
+                }
+            } catch (org.springframework.web.client.HttpStatusCodeException e) {
+                int status = e.getStatusCode().value();
+                log.warn("Gemini API HTTP {} on attempt {}/{}: {}", status, attempt, maxAttempts, e.getResponseBodyAsString());
+                
+                // If rate limited (429) or temporary server error (503/500), retry after pause
+                if ((status == 429 || status == 503 || status == 500) && attempt < maxAttempts) {
+                    try {
+                        Thread.sleep(1800);
+                        continue;
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+                
+                String userMessage = (status == 429)
+                        ? "Bạn đang gửi tin nhắn hơi nhanh so với giới hạn API. Vui lòng đợi khoảng 10-15 giây rồi thử lại nhé!"
+                        : "Hệ thống AI hiện đang bận hoặc quá tải, vui lòng thử lại sau.";
+                        
+                return AIProviderResponse.builder()
+                        .text(userMessage)
+                        .rawRequest(rawRequest)
+                        .rawResponse(e.getMessage() + " | Body: " + e.getResponseBodyAsString())
+                        .build();
+            } catch (org.springframework.web.client.ResourceAccessException e) {
+                log.warn("Gemini API connection/timeout on attempt {}/{}: {}", attempt, maxAttempts, e.getMessage());
+                if (attempt < maxAttempts) {
+                    try {
+                        Thread.sleep(1500);
+                        continue;
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+                return AIProviderResponse.builder()
+                        .text("Yêu cầu xử lý AI mất nhiều thời gian hơn dự kiến (hết thời gian chờ). Vui lòng thử lại câu hỏi ngắn gọn hơn.")
+                        .rawRequest(rawRequest)
+                        .rawResponse(e.getMessage())
+                        .build();
+            } catch (Exception e) {
+                log.error("Unexpected error in GeminiProvider on attempt {}", attempt, e);
+                return AIProviderResponse.builder()
+                        .text("Hệ thống AI hiện đang bận hoặc quá tải, vui lòng thử lại sau.")
+                        .rawRequest(rawRequest)
+                        .rawResponse(e.getMessage())
+                        .build();
+            }
+        }
+
+        return AIProviderResponse.builder()
+                .text("Hệ thống AI hiện đang bận hoặc quá tải, vui lòng thử lại sau.")
+                .rawRequest(rawRequest)
+                .rawResponse("Max retry attempts reached")
+                .build();
     }
 
     private AIProviderResponse parseResponse(String rawResponse, String rawRequest, long responseTimeMs) throws Exception {
@@ -188,6 +240,15 @@ public class GeminiProvider implements AIProvider {
         JsonNode candidate = root.get("candidates").get(0);
         JsonNode content = candidate.get("content");
         if (content != null && content.has("parts")) {
+            String candidateThoughtSignature = null;
+            for (JsonNode part : content.get("parts")) {
+                if (part.has("thoughtSignature")) {
+                    candidateThoughtSignature = part.get("thoughtSignature").asText();
+                } else if (part.has("thought_signature")) {
+                    candidateThoughtSignature = part.get("thought_signature").asText();
+                }
+            }
+
             for (JsonNode part : content.get("parts")) {
                 if (part.has("text")) {
                     result.setText(part.get("text").asText());
@@ -195,7 +256,7 @@ public class GeminiProvider implements AIProvider {
                     JsonNode funcCall = part.get("functionCall");
                     AIToolCall toolCall = new AIToolCall();
                     toolCall.setName(funcCall.get("name").asText());
-                    toolCall.setId(UUID.randomUUID().toString()); // Gemini doesn't always provide IDs, generate one
+                    toolCall.setId(UUID.randomUUID().toString());
                     if (funcCall.has("args")) {
                         toolCall.setArguments(objectMapper.convertValue(funcCall.get("args"), Map.class));
                     }
@@ -203,6 +264,8 @@ public class GeminiProvider implements AIProvider {
                         toolCall.setThoughtSignature(part.get("thoughtSignature").asText());
                     } else if (part.has("thought_signature")) {
                         toolCall.setThoughtSignature(part.get("thought_signature").asText());
+                    } else if (candidateThoughtSignature != null) {
+                        toolCall.setThoughtSignature(candidateThoughtSignature);
                     }
                     if (result.getToolCalls() == null) {
                         result.setToolCalls(new ArrayList<>());

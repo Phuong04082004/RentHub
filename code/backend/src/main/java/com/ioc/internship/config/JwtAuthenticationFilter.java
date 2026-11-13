@@ -1,11 +1,14 @@
 package com.ioc.internship.config;
 
 import com.ioc.internship.common.utils.JwtUtils;
+import io.jsonwebtoken.ExpiredJwtException;
+import io.jsonwebtoken.JwtException;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.MediaType;
 import org.springframework.lang.NonNull;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -31,7 +34,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             @NonNull FilterChain filterChain
     ) throws ServletException, IOException {
 
-        //Dùng getRequestURI() để quét toàn bộ URL, tránh bẫy chuỗi rỗng của Tomcat
+        // Dung getRequestURI() de quet toan bo URL
         String requestUri = request.getRequestURI();
         if (requestUri.contains("/api/v1/auth") ||
                 requestUri.contains("/swagger-ui") ||
@@ -40,52 +43,66 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             return;
         }
 
-        // 1. Lấy chuỗi mã hóa nằm trong trường "Authorization" từ Header
+        // 1. Lay chuoi ma hoa nam trong truong "Authorization" tu Header
         final String authHeader = request.getHeader("Authorization");
         final String jwt;
         final String userEmail;
 
-        // Nếu Header trống hoặc không bắt đầu bằng chữ "Bearer ", cho Request đi tiếp
+        // Neu Header trong hoac khong bat dau bang "Bearer ", cho Request di tiep
         if (authHeader == null || !authHeader.startsWith("Bearer ")) {
             filterChain.doFilter(request, response);
             return;
         }
 
         try {
-            // 2. Cắt bỏ chữ "Bearer " để lấy chính xác chuỗi JWT Token
+            // 2. Cat bo "Bearer " de lay chinh xac chuoi JWT Token
             jwt = authHeader.substring(7);
 
-            // 3. Sử dụng JwtUtils để bóc tách lấy Email
+            // 3. Su dung JwtUtils de boc tach lay Email
             userEmail = jwtUtils.extractEmail(jwt);
 
-            // 4. Nếu bóc được Email VÀ người dùng này CHƯA được xác thực trong phiên này
+            // 4. Neu boc duoc Email VA nguoi dung nay CHUA duoc xac thuc trong phien nay
             if (userEmail != null && SecurityContextHolder.getContext().getAuthentication() == null) {
 
-                // Xuống DB tìm thông tin đầy đủ của User
+                // Xuong DB tim thong tin day du cua User
                 UserDetails userDetails = this.userDetailsService.loadUserByUsername(userEmail);
 
-                // Kiểm tra xem Token có chính chủ và còn hạn sử dụng hay không
+                // Kiem tra xem Token co chinh chu va con han su dung hay khong
                 if (jwtUtils.isTokenValid(jwt, userDetails)) {
 
-                    // Tạo một chiếc "Thẻ thông hành"
+                    // Tao mot chiec "The thong hanh"
                     UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(
                             userDetails,
                             null,
                             userDetails.getAuthorities()
                     );
 
-                    // Đóng dấu chi tiết Request
+                    // Dong dau chi tiet Request
                     authToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
 
-                    // CẤT CHIẾC THẺ NÀY VÀO KÉT SẮT BẢO MẬT
+                    // CAT CHIEC THE NAY VAO KET SAT BAO MAT
                     SecurityContextHolder.getContext().setAuthentication(authToken);
                 }
             }
+        } catch (ExpiredJwtException e) {
+            // Token het han -> tra ve 401 Unauthorized ro rang
+            logger.warn("JWT token het han: " + e.getMessage());
+            response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+            response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+            response.getWriter().write("{\"error\": \"Token het han, vui long dang nhap lai\"}");
+            return;
+        } catch (JwtException e) {
+            // Token bi gia mao hoac khong hop le -> tra ve 401
+            logger.warn("JWT token khong hop le: " + e.getMessage());
+            response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+            response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+            response.getWriter().write("{\"error\": \"Token khong hop le\"}");
+            return;
         } catch (Exception e) {
-            logger.warn("JWT authentication failed: " + e.getMessage());
+            logger.warn("JWT authentication that bai: " + e.getMessage());
         }
 
-        // Mở cửa cho Request tiếp tục hành trình
+        // Mo cua cho Request tiep tuc hanh trinh
         filterChain.doFilter(request, response);
     }
 }

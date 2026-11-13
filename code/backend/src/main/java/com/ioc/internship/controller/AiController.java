@@ -25,7 +25,14 @@ public class AiController {
 
     @PostMapping("/chat")
     public ResponseEntity<AiChatResponse> chat(@Valid @RequestBody AiChatRequest request, Authentication authentication) {
-        UserEntity user = userService.getUserByEmail(authentication.getName());
+        UserEntity user = null;
+        if (authentication != null && authentication.isAuthenticated() && !"anonymousUser".equals(authentication.getName())) {
+            try {
+                user = userService.getUserByEmail(authentication.getName());
+            } catch (Exception ignored) {
+                // Người dùng chưa đăng nhập hoặc không tìm thấy user
+            }
+        }
         return ResponseEntity.ok(aiService.chat(request, user));
     }
 

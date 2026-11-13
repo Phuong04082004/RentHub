@@ -2,7 +2,6 @@ import api from "../lib/axios";
 import axios from "axios";
 import { LoginInput, RegisterInput } from "../schemas/auth.schema";
 
-const API_URL = "http://localhost:8080/api/v1/auth";
 
 export interface AuthResponse {
   token: string;

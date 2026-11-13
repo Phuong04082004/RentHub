@@ -16,6 +16,7 @@ export interface InputProps extends Omit<React.InputHTMLAttributes<HTMLInputElem
   type?: InputType;
   isRequired?: boolean;
   isInvalid?: boolean;
+  isDisabled?: boolean;
   error?: string;
 }
 

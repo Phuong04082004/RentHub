@@ -50,15 +50,7 @@ export const userService = {
   },
 
   getPublicProfile: async (id: number): Promise<PublicOwnerResponse> => {
-    const response = await fetch(`http://localhost:8080/api/users/${id}/public`, {
-      method: "GET",
-      headers: {
-        "Content-Type": "application/json",
-      },
-    });
-    if (!response.ok) {
-      throw new Error("Không thể tải thông tin hồ sơ công khai!");
-    }
-    return response.json();
+    const res = await api.get(`/users/${id}/public`);
+    return res.data;
   }
 };

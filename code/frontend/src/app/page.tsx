@@ -1,8 +1,7 @@
-"use client";
 import { Suspense } from "react";
 import { HomeScreen } from "./home-screen";
 
-// TODO: Page.tsx acts as the routing entry point rendering the HomeScreen component
+// Page.tsx acts as the routing entry point rendering the HomeScreen component
 export default function Page() {
   return (
     <Suspense fallback={

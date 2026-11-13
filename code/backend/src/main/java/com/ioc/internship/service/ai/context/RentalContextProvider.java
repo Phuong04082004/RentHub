@@ -16,6 +16,9 @@ public class RentalContextProvider {
     private final RentalRequestService rentalRequestService;
 
     public String getMyRentalsContext(UserEntity user) {
+        if (user == null) {
+            return "Người dùng hiện chưa đăng nhập. Vui lòng đăng nhập để xem thông tin đơn thuê.";
+        }
         // Just fetching the latest 3 rentals for context
         List<RentalRequestSummaryResponse> rentals = rentalRequestService.getMyRentalRequests(user.getEmail(), null, 0, 3).getContent();
         if (rentals == null || rentals.isEmpty()) {

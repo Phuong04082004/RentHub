@@ -323,7 +323,7 @@ export function GlobalChatWidget() {
         content: text,
         conversationId: aiConversationId
       });
-      setAiConversationId(response.conversationId);
+      setAiConversationId(response.conversationId ?? undefined);
       setAiMessages((prev) => [...prev, { sender: "assistant", text: response.response }]);
       
       const regex = /\[PRODUCT:(\d+)\]/g;

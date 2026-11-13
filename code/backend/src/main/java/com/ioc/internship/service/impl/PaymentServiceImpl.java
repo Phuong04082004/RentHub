@@ -58,8 +58,8 @@ public class PaymentServiceImpl implements PaymentService {
                 if (depositCount > 0) {
                     throw new RuntimeException("400 Bad Request: Rental already has a successful DEPOSIT payment");
                 }
-            } else if (request.getPaymentType() == PaymentType.RENTAL_PAYMENT) {
-                long feeCount = paymentRepository.countByRentalAndPaymentTypeAndStatus(rental, PaymentType.RENTAL_PAYMENT, PaymentStatus.SUCCESS);
+            } else if (request.getPaymentType() == PaymentType.RENTAL_PAYMENT || request.getPaymentType() == PaymentType.RENTAL_FEE) {
+                long feeCount = paymentRepository.countByRentalAndPaymentTypeAndStatus(rental, PaymentType.RENTAL_PAYMENT, PaymentStatus.SUCCESS) + paymentRepository.countByRentalAndPaymentTypeAndStatus(rental, PaymentType.RENTAL_FEE, PaymentStatus.SUCCESS);
                 if (feeCount > 0) {
                     throw new RuntimeException("400 Bad Request: Rental already has a successful RENTAL_PAYMENT payment");
                 }
@@ -96,7 +96,7 @@ public class PaymentServiceImpl implements PaymentService {
         }
 
         // Nếu thanh toán RENTAL_FEE thành công → cập nhật trạng thái đơn thuê sang ACTIVE
-        if (request.getStatus() == PaymentStatus.SUCCESS && request.getPaymentType() == PaymentType.RENTAL_FEE) {
+        if (request.getStatus() == PaymentStatus.SUCCESS && (request.getPaymentType() == PaymentType.RENTAL_FEE || request.getPaymentType() == PaymentType.RENTAL_PAYMENT)) {
             rental.setStatus(RentalStatus.ACTIVE);
             rentalRepository.save(rental);
             log.info("[PAYMENT] Rental ID={} updated to ACTIVE after RENTAL_FEE payment", rental.getId());

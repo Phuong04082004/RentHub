@@ -2,12 +2,12 @@ import api from "@/lib/axios";
 
 export interface AiChatRequest {
   content: string;
-  conversationId?: number;
+  conversationId?: number | null;
 }
 
 export interface AiChatResponse {
   response: string;
-  conversationId: number;
+  conversationId: number | null;
   conversationTitle: string;
 }
 

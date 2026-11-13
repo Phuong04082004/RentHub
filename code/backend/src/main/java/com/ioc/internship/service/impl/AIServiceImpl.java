@@ -55,44 +55,61 @@ public class AIServiceImpl implements AIService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Chức năng AI hiện đang bị tắt.");
         }
 
-        rateLimiter.checkAndConsume(currentUser.getId());
+        Long rateLimitUserId = (currentUser != null) ? currentUser.getId() : 0L;
+        rateLimiter.checkAndConsume(rateLimitUserId);
         securityValidator.validatePromptInjection(request.getContent());
 
         // Process FAQ first to save tokens
         String faqAnswer = faqEngine.matchFAQ(request.getContent());
         
-        AiConversation conversation = getOrCreateConversation(request.getConversationId(), request.getContent(), currentUser);
-        
-        // Save user message
-        AiMessage userMsg = AiMessage.builder()
-                .conversation(conversation)
-                .role("user")
-                .content(request.getContent())
-                .build();
-        messageRepository.save(userMsg);
+        AiConversation conversation = null;
+        if (currentUser != null) {
+            conversation = getOrCreateConversation(request.getConversationId(), request.getContent(), currentUser);
+            
+            // Save user message
+            AiMessage userMsg = AiMessage.builder()
+                    .conversation(conversation)
+                    .role("user")
+                    .content(request.getContent())
+                    .build();
+            messageRepository.save(userMsg);
+        }
 
         if (faqAnswer != null) {
-            AiMessage assistantMsg = AiMessage.builder()
-                    .conversation(conversation)
-                    .role("model")
-                    .content(faqAnswer)
-                    .build();
-            messageRepository.save(assistantMsg);
-            return new AiChatResponse(faqAnswer, conversation.getId(), conversation.getTitle());
+            if (conversation != null) {
+                AiMessage assistantMsg = AiMessage.builder()
+                        .conversation(conversation)
+                        .role("model")
+                        .content(faqAnswer)
+                        .build();
+                messageRepository.save(assistantMsg);
+                return new AiChatResponse(faqAnswer, conversation.getId(), conversation.getTitle());
+            } else {
+                return new AiChatResponse(faqAnswer, null, "Tư vấn RentHub");
+            }
         }
 
         // Token optimization (Windowing)
-        List<AiMessage> history = messageRepository.findAllByConversationOrderByCreatedAtAsc(conversation);
-        if (history.size() > WINDOW_SIZE) {
-            history = history.subList(history.size() - WINDOW_SIZE, history.size());
-        }
+        List<AiChatMessageDto> dtoHistory;
+        if (conversation != null) {
+            List<AiMessage> history = messageRepository.findAllByConversationOrderByCreatedAtAsc(conversation);
+            if (history.size() > WINDOW_SIZE) {
+                history = history.subList(history.size() - WINDOW_SIZE, history.size());
+            }
 
-        List<AiChatMessageDto> dtoHistory = history.stream()
-                .map(m -> AiChatMessageDto.builder()
-                        .role(m.getRole())
-                        .textContent(m.getContent())
-                        .build())
-                .collect(Collectors.toList());
+            dtoHistory = history.stream()
+                    .map(m -> AiChatMessageDto.builder()
+                            .role(m.getRole())
+                            .textContent(m.getContent())
+                            .build())
+                    .collect(Collectors.toList());
+        } else {
+            dtoHistory = new ArrayList<>();
+            dtoHistory.add(AiChatMessageDto.builder()
+                    .role("user")
+                    .textContent(request.getContent())
+                    .build());
+        }
 
         // Generate Response
         AIProviderResponse aiResponse;
@@ -104,6 +121,7 @@ public class AIServiceImpl implements AIService {
             if (aiResponse.getToolCalls() != null && !aiResponse.getToolCalls().isEmpty()) {
                 AiChatMessageDto toolCallMsg = AiChatMessageDto.builder()
                         .role("model")
+                        .textContent(aiResponse.getText())
                         .toolCalls(aiResponse.getToolCalls())
                         .build();
                 dtoHistory.add(toolCallMsg);
@@ -128,28 +146,37 @@ public class AIServiceImpl implements AIService {
                 aiResponse = aiProvider.generateResponse(dtoHistory, SYSTEM_PROMPT, availableTools);
             }
         } catch (Exception e) {
+            log.error("AI processing error", e);
             String errorMessage = "Xin lỗi, hiện tại hệ thống AI đang gặp sự cố hoặc chưa được cấu hình API Key. Vui lòng liên hệ quản trị viên.";
-            AiMessage errorMsg = AiMessage.builder()
-                    .conversation(conversation)
-                    .role("model")
-                    .content(errorMessage)
-                    .build();
-            messageRepository.save(errorMsg);
-            return new AiChatResponse(errorMessage, conversation.getId(), conversation.getTitle());
+            if (conversation != null) {
+                AiMessage errorMsg = AiMessage.builder()
+                        .conversation(conversation)
+                        .role("model")
+                        .content(errorMessage)
+                        .build();
+                messageRepository.save(errorMsg);
+                return new AiChatResponse(errorMessage, conversation.getId(), conversation.getTitle());
+            } else {
+                return new AiChatResponse(errorMessage, null, "Lỗi kết nối AI");
+            }
         }
 
-        // Save AI Message
-        AiMessage assistantMsg = AiMessage.builder()
-                .conversation(conversation)
-                .role("model")
-                .content(aiResponse.getText())
-                .build();
-        messageRepository.save(assistantMsg);
+        // Save AI Message if logged in
+        if (conversation != null) {
+            AiMessage assistantMsg = AiMessage.builder()
+                    .conversation(conversation)
+                    .role("model")
+                    .content(aiResponse.getText())
+                    .build();
+            messageRepository.save(assistantMsg);
 
-        // Usage Logging
-        saveUsageLog(currentUser, conversation, aiResponse);
+            // Usage Logging
+            saveUsageLog(currentUser, conversation, aiResponse);
 
-        return new AiChatResponse(aiResponse.getText(), conversation.getId(), conversation.getTitle());
+            return new AiChatResponse(aiResponse.getText(), conversation.getId(), conversation.getTitle());
+        } else {
+            return new AiChatResponse(aiResponse.getText(), null, "Tư vấn RentHub");
+        }
     }
 
     private AiConversation getOrCreateConversation(Long conversationId, String firstMessageContent, UserEntity currentUser) {

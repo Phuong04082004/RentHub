@@ -1,7 +1,7 @@
 import axios from "axios";
 
 const api = axios.create({
-  baseURL: "http://localhost:8080/api",
+  baseURL: process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080/api",
   headers: {
     "Content-Type": "application/json",
   },
@@ -16,11 +16,11 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// Tự động xử lý khi Token hết hạn hoặc không hợp lệ (lỗi 401 hoặc 403)
+// Tự động xử lý khi Token hết hạn (lỗi 401)
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response && (error.response.status === 401 || error.response.status === 403)) {
+    if (error.response && error.response.status === 401) {
       localStorage.removeItem("token");
       localStorage.removeItem("role");
       localStorage.removeItem("user");

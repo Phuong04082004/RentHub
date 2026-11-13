@@ -102,8 +102,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         localStorage.setItem("role", userRole);
         localStorage.setItem("fullName", profile.fullName);
         setIsAuthenticated(true);
-      } catch (error) {
-        console.error("Xác thực token thất bại khi khởi động:", error);
+      } catch (error: unknown) {
+        // Bắt cả 401 (token hết hạn) và 403 (token không hợp lệ/bị revoke)
+        const axiosError = error as { response?: { status?: number } };
+        const status = axiosError?.response?.status;
+        if (status === 401 || status === 403) {
+          console.warn(`Token không hợp lệ (HTTP ${status}), tự động đăng xuất.`);
+        } else {
+          console.error("Lỗi khi xác thực token khởi động:", error);
+        }
         logout();
       } finally {
         setIsLoading(false);
