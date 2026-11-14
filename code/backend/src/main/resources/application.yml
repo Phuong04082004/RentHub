@@ -6,4 +6,4 @@ spring:
     active: dev   # mặc định chạy dev
 
 server:
-  port: 8080
+  port: ${PORT:8080}
