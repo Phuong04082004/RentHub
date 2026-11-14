@@ -14,6 +14,8 @@ public interface UserRepository extends JpaRepository<UserEntity, Long>, JpaSpec
     // Trả về Optional để tránh lỗi NullPointerException nếu không tìm thấy
     Optional<UserEntity> findByEmail(String email);
 
+    Optional<UserEntity> findByEmailIgnoreCase(String email);
+
     // 2. Kiểm tra xem email đã tồn tại trong hệ thống chưa (dùng cho luồng Đăng ký)
     boolean existsByEmail(String email);
 

@@ -27,8 +27,13 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
 
+import javax.sql.DataSource;
+import java.sql.Connection;
+import java.sql.DatabaseMetaData;
 import java.security.SecureRandom;
 import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Optional;
 
 @Slf4j
 @Service
@@ -39,6 +44,7 @@ public class AuthServiceImpl implements AuthService {
     private final PasswordEncoder passwordEncoder;
     private final JwtUtils jwtUtils;
     private final AuthenticationManager authenticationManager;
+    private final DataSource dataSource;
 
     private final EmailOtpRepository emailOtpRepository;
     private final EmailService emailService;
@@ -111,18 +117,74 @@ public class AuthServiceImpl implements AuthService {
 
     @Override
     public AuthResponse login(LoginRequest request) {
-        UserEntity user = userRepository.findByEmail(request.getEmail())
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Không tìm thấy người dùng!"));
+        String rawEmail = request.getEmail();
+        String trimmedEmail = rawEmail != null ? rawEmail.trim() : "";
+
+        log.info("==================== [LOGIN DEBUG START] ====================");
+        log.info("--> [LOGIN REQUEST] Raw email: '{}', Trimmed: '{}'", rawEmail, trimmedEmail);
+
+        // 1. Log Database Connection Info
+        try (Connection conn = dataSource.getConnection()) {
+            DatabaseMetaData meta = conn.getMetaData();
+            log.info("--> [DB INFO] URL: {}", meta.getURL());
+            log.info("--> [DB INFO] Product: {} (version {})", meta.getDatabaseProductName(), meta.getDatabaseProductVersion());
+            log.info("--> [DB INFO] User: {}", meta.getUserName());
+            log.info("--> [DB INFO] Catalog/Database: {}", conn.getCatalog());
+        } catch (Exception e) {
+            log.error("--> [DB INFO ERROR] Could not get DB metadata: {}", e.getMessage());
+        }
+
+        // 2. Log Total Users & Sample Emails in DB
+        long totalUsers = userRepository.count();
+        log.info("--> [DB USERS COUNT] Total users in DB: {}", totalUsers);
+        if (totalUsers == 0) {
+            log.warn("--> [DB WARNING] The 'users' table is COMPLETELY EMPTY! Data has not been imported into this database.");
+        } else {
+            List<String> sampleEmails = userRepository.findAll().stream()
+                    .map(u -> String.format("[email='%s', status='%s', role='%s']", u.getEmail(), u.getStatus(), u.getRole()))
+                    .limit(10)
+                    .toList();
+            log.info("--> [DB USERS SAMPLE (up to 10)] {}", sampleEmails);
+        }
+
+        // 3. User lookup (exact, trimmed, ignore case)
+        Optional<UserEntity> userOpt = userRepository.findByEmail(rawEmail);
+        if (userOpt.isEmpty() && !rawEmail.equals(trimmedEmail)) {
+            userOpt = userRepository.findByEmail(trimmedEmail);
+        }
+        if (userOpt.isEmpty()) {
+            userOpt = userRepository.findByEmailIgnoreCase(trimmedEmail);
+            if (userOpt.isPresent()) {
+                log.info("--> [LOGIN MATCH] Found user via case-insensitive search: '{}'", userOpt.get().getEmail());
+            }
+        }
+
+        if (userOpt.isEmpty()) {
+            log.warn("--> [LOGIN 404 NOT FOUND] No user found with email: '{}'. Total users in DB: {}", rawEmail, totalUsers);
+            log.info("==================== [LOGIN DEBUG END - 404] ====================");
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND,
+                    "Không tìm thấy người dùng! (Email: '" + rawEmail + "' không tồn tại trong DB hiện tại. Tổng số user trong DB: " + totalUsers + ")");
+        }
+
+        UserEntity user = userOpt.get();
+        log.info("--> [USER FOUND] ID: {}, Email: '{}', Status: '{}', Role: '{}', isEnabled: {}",
+                user.getId(), user.getEmail(), user.getStatus(), user.getRole(), user.isEnabled());
 
         if (!user.isEnabled()) {
+            log.warn("--> [LOGIN 401 UNAUTHORIZED] User '{}' is not ACTIVE (current status: '{}')", user.getEmail(), user.getStatus());
+            log.info("==================== [LOGIN DEBUG END - 401] ====================");
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Tài khoản của bạn chưa được kích hoạt. Vui lòng xác thực email.");
         }
 
+        log.info("--> [AUTH MANAGER] Authenticating password for user '{}'...", user.getEmail());
         authenticationManager.authenticate(
-                new UsernamePasswordAuthenticationToken(request.getEmail(), request.getPassword())
+                new UsernamePasswordAuthenticationToken(user.getEmail(), request.getPassword())
         );
 
         String jwtToken = jwtUtils.generateToken(user);
+        log.info("--> [LOGIN SUCCESS] Successfully authenticated and generated JWT for '{}'", user.getEmail());
+        log.info("==================== [LOGIN DEBUG END - SUCCESS] ====================");
+
         return AuthResponse.builder()
                 .token(jwtToken)
                 .email(user.getEmail())
